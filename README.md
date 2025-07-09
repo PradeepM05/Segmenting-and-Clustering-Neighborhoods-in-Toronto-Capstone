@@ -1,44 +1,36 @@
-for key, val in prod_dict.items():
-    print(f"Finding hierarchy for product: {key} ........ {format(key)}")
-    
-    # Step 1: Collect the complete hierarchy chain
-    hierarchy_chain = []
-    current = key
-123123123
-df = df1.collect()
-prod_dict = {}
-for row in df:
-    prod_dict[row["product_type_id"]] = row["parent_prod_type_id"] or 0
 
-schema = StructType([
-    StructField("product_type_id", IntegerType(), True),
-    StructField("id_hierarchy", IntegerType(), True),
-    StructField("level", IntegerType(), True)
-])
-df_prod_level = spark.createDataFrame([], schema)
-cols = ["product_type_id", "id_hierarchy", "level"]
+# PROBLEM IN YOUR CURRENT CODE:
+# You're joining hierarchy levels incorrectly. The levels are now correct (1=general, 6=specific)
+# but the join logic needs to be fixed to properly map to prdtyp_product1 through prdtyp_product6
 
-def find_parent(prod_dict, current):
-    return prod_dict.get(current, 0)
+# REPLACE YOUR CURRENT MAPPING CODE WITH THIS CORRECTED VERSION:
+# =============================================================================
 
-for key in prod_dict.keys():
-    path = []
-    current = key
-    while current != 0:
-        parent = find_parent(prod_dict, current)
-        if parent == 0:
-            break
-        path.append((parent, key))  # (parent, child)
-        current = parent
+# Step 1: Create the base DataFrame with product codes
+df_prod_cd = spark.table(product_tbl).alias("prod")
 
-    # Now assign levels from top-down
-    level = 1
-    for parent, child in reversed(path):  # root is first, leaf is last
-        new_row = spark.createDataFrame([(parent, child, level)], cols)
-        df_prod_level = df_prod_level.union(new_row)
-        level += 1
+# Step 2: Create hierarchy level DataFrames (assuming df_prod_level is correctly built)
+df_level1 = df_prod_level.filter(f.col("level") == 1).alias("h1")  # Most general
+df_level2 = df_prod_level.filter(f.col("level") == 2).alias("h2")
+df_level3 = df_prod_level.filter(f.col("level") == 3).alias("h3")
+df_level4 = df_prod_level.filter(f.col("level") == 4).alias("h4")
+df_level5 = df_prod_level.filter(f.col("level") == 5).alias("h5")
+df_level6 = df_prod_level.filter(f.col("level") == 6).alias("h6")  # Most specific
 
-# Add identity (level 0) for all products (optional)
-df_prod_level_all = df_prod_level.union(
-    df1.selectExpr("product_type_id", "product_type_id as id_hierarchy", "0 as level")
-)
+# Step 3: Build the hierarchy chain by joining from most specific to most general
+# Start with the product and work backwards through the hierarchy
+
+# CORRECTED APPROACH - Join in reverse order to build the chain:
+df_prod_hier_final = df_prod_cd\
+    .join(df_level6, f.col("prod.product_type_id") == f.col("h6.child_id"), "left")\
+    .withColumn("prdtyp_product6", f.col("h6.parent_id"))\
+    .join(df_level5, f.col("h6.parent_id") == f.col("h5.child_id"), "left")\
+    .withColumn("prdtyp_product5", f.col("h5.parent_id"))\
+    .join(df_level4, f.col("h5.parent_id") == f.col("h4.child_id"), "left")\
+    .withColumn("prdtyp_product4", f.col("h4.parent_id"))\
+    .join(df_level3, f.col("h4.parent_id") == f.col("h3.child_id"), "left")\
+    .withColumn("prdtyp_product3", f.col("h3.parent_id"))\
+    .join(df_level2, f.col("h3.parent_id") == f.col("h2.child_id"), "left")\
+    .withColumn("prdtyp_product2", f.col("h2.parent_id"))\
+    .join(df_level1, f.col("h2.parent_id") == f.col("h1.child_id"), "left")\
+    .withColumn("prdtyp_product1", f.col("h1.parent_id"))
